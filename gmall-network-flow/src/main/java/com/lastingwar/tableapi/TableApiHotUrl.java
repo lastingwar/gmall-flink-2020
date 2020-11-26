@@ -2,6 +2,7 @@ package com.lastingwar.tableapi;
 
 import com.lastingwar.bean.ApacheLog;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.tuple.Tuple4;
 import org.apache.flink.streaming.api.TimeCharacteristic;
@@ -35,21 +36,21 @@ public class TableApiHotUrl {
         StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
         // 读取数据并转换为JavaBean
-        DataStreamSource<String> dataStreamSource = env.readTextFile("input/apache1.log");
+        DataStreamSource<String> dataStreamSource = env.readTextFile("input/apache.log");
         SingleOutputStreamOperator<ApacheLog> logDS = dataStreamSource
                 .map(new MapFunction<String, ApacheLog>() {
-            @Override
-            public ApacheLog map(String value) throws Exception {
-                SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy:HH:mm:ss");
-                String[] split = value.split(" ");
-                return new ApacheLog(
-                        split[0],
-                        split[1],
-                        sdf.parse(split[3]).getTime(),
-                        split[5],
-                        split[6]);
-            }
-        }).assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<ApacheLog>(Time.seconds(1)) {
+                    @Override
+                    public ApacheLog map(String value) throws Exception {
+                        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy:HH:mm:ss");
+                        String[] split = value.split(" ");
+                        return new ApacheLog(
+                                split[0],
+                                split[1],
+                                sdf.parse(split[3]).getTime(),
+                                split[5],
+                                split[6]);
+                    }
+                }).assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<ApacheLog>(Time.seconds(1)) {
                     @Override
                     public long extractTimestamp(ApacheLog element) {
                         return element.getEventTime();
@@ -63,6 +64,7 @@ public class TableApiHotUrl {
                 .groupBy("url,tw")
                 .select("url,url.count as counts,tw.end as endtime");
 
+        Thread.sleep(1);
         tableEnv.registerFunction("Top5Count", new Top5Count());
 
         Table result = logCount.groupBy("endtime")
@@ -85,8 +87,8 @@ public class TableApiHotUrl {
                 " 'connector.driver' = 'com.mysql.jdbc.Driver', " +
                 " 'connector.username' = 'root', " +
                 " 'connector.password' = '123456', " +
-                " 'connector.write.flush.max-rows' = '1'," + //刷写条数,默认5000
-                " 'connector.write.flush.interval' = '2s')"; // 刷写时间,默认0s不启用
+                " 'connector.write.flush.max-rows' = '200'," + //刷写条数,默认5000
+                " 'connector.write.flush.interval' = '5s')"; // 刷写时间,默认0s不启用
 
         tableEnv.toRetractStream(result1, Row.class).print("result1");
 
@@ -97,39 +99,47 @@ public class TableApiHotUrl {
         env.execute();
     }
 
-    public static class Top5Count extends TableAggregateFunction<Tuple4<Long,Integer,String,Long>, ArrayList<String>> {
+    public static class Top5Count extends TableAggregateFunction<Tuple4<Long, Integer, String, Long>, ArrayList<Tuple2<String, Long>>> {
 
         private Long end = 0L;
+
         @Override
-        public ArrayList<String> createAccumulator() {
-            return new ArrayList<String>(16){};
+        public ArrayList<Tuple2<String, Long>> createAccumulator() {
+            return new ArrayList<Tuple2<String, Long>>(16) {
+            };
         }
 
-        public void accumulate(ArrayList<String> buffer , String url, Long counts, Timestamp endtime){
-            if (end == 0L){
+        public void accumulate(ArrayList<Tuple2<String, Long>> buffer, String url, Long counts, Timestamp endtime) {
+            if (end == 0L) {
                 end = endtime.getTime();
             }
-            String urlCount = url + " " + counts;
-            buffer.add(urlCount);
+            // 更新元素
+            boolean flag = false;
+            for (int i = 0; i < buffer.size(); i++) {
+                Tuple2<String, Long> stringLongTuple2 = buffer.get(i);
+                if (stringLongTuple2.f0.equals(url)) {
+                    buffer.set(i,new Tuple2<>(url, Math.max(counts,stringLongTuple2.f1)));
+                    flag = true;
+                }
+            }
+            if(!flag){
+                buffer.add(new Tuple2<>(url,counts));
+            }
         }
 
-        public void emitValue(ArrayList<String> buffer, Collector<Tuple4<Long,Integer,String,Long>> collector){
+        public void emitValue(ArrayList<Tuple2<String, Long>> buffer, Collector<Tuple4<Long, Integer, String, Long>> collector) {
 
-            buffer.sort(new Comparator<String>() {
+            buffer.sort(new Comparator<Tuple2<String, Long>>() {
                 @Override
-                public int compare(String o1, String o2) {
-                    Long s1 = Long.parseLong(o1.split(" ")[1]);
-                    Long s2 = Long.parseLong(o2.split(" ")[1]);
-                    return s2.compareTo(s1);
+                public int compare(Tuple2<String, Long> o1, Tuple2<String, Long> o2) {
+                    return o2.f1.compareTo(o1.f1);
                 }
             });
-            for (int i = 0; i < buffer.size(); i++) {
-                String[] s = buffer.get(i).split(" ");
-                String url = s[0];
-                Long counts = Long.parseLong(s[1]);
-                collector.collect(new Tuple4<>(end,i+1,url,counts));
-            }
 
+            for (int i = 0; i < Math.min(buffer.size(), 5); i++) {
+                collector.collect(new Tuple4<>(end, i + 1, buffer.get(i).f0, buffer.get(i).f1));
+            }
+            end = 0L;
         }
     }
 }
