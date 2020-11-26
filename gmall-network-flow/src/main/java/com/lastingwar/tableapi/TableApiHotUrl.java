@@ -37,6 +37,8 @@ public class TableApiHotUrl {
 
         // 读取数据并转换为JavaBean
         DataStreamSource<String> dataStreamSource = env.readTextFile("input/apache.log");
+
+//        DataStreamSource<String> dataStreamSource = env.socketTextStream("hadoop102", 7777);
         SingleOutputStreamOperator<ApacheLog> logDS = dataStreamSource
                 .map(new MapFunction<String, ApacheLog>() {
                     @Override
@@ -60,11 +62,11 @@ public class TableApiHotUrl {
         Table apacheLog = tableEnv.fromDataStream(logDS, "method,url,rt.rowtime");
 
         Table logCount = apacheLog.where("'GET' = method")
-                .window(Slide.over("30.seconds").every("5.seconds").on("rt").as("tw"))
+                .window(Slide.over("10.minutes").every("5.seconds").on("rt").as("tw"))
                 .groupBy("url,tw")
                 .select("url,url.count as counts,tw.end as endtime");
 
-        Thread.sleep(1);
+//        Thread.sleep(1);
         tableEnv.registerFunction("Top5Count", new Top5Count());
 
         Table result = logCount.groupBy("endtime")
@@ -87,10 +89,10 @@ public class TableApiHotUrl {
                 " 'connector.driver' = 'com.mysql.jdbc.Driver', " +
                 " 'connector.username' = 'root', " +
                 " 'connector.password' = '123456', " +
-                " 'connector.write.flush.max-rows' = '200'," + //刷写条数,默认5000
-                " 'connector.write.flush.interval' = '5s')"; // 刷写时间,默认0s不启用
+                " 'connector.write.flush.max-rows' = '100'," + //刷写条数,默认5000
+                " 'connector.write.flush.interval' = '2s')"; // 刷写时间,默认0s不启用
 
-        tableEnv.toRetractStream(result1, Row.class).print("result1");
+//        tableEnv.toRetractStream(result1, Row.class).print("result1");
 
         tableEnv.sqlUpdate(sinkDDL);
 
@@ -101,10 +103,11 @@ public class TableApiHotUrl {
 
     public static class Top5Count extends TableAggregateFunction<Tuple4<Long, Integer, String, Long>, ArrayList<Tuple2<String, Long>>> {
 
-        private Long end = 0L;
+        private Long end;
 
         @Override
         public ArrayList<Tuple2<String, Long>> createAccumulator() {
+            end = 0L;
             return new ArrayList<Tuple2<String, Long>>(16) {
             };
         }
@@ -120,6 +123,7 @@ public class TableApiHotUrl {
                 if (stringLongTuple2.f0.equals(url)) {
                     buffer.set(i,new Tuple2<>(url, Math.max(counts,stringLongTuple2.f1)));
                     flag = true;
+                    break;
                 }
             }
             if(!flag){
@@ -139,7 +143,6 @@ public class TableApiHotUrl {
             for (int i = 0; i < Math.min(buffer.size(), 5); i++) {
                 collector.collect(new Tuple4<>(end, i + 1, buffer.get(i).f0, buffer.get(i).f1));
             }
-            end = 0L;
         }
     }
 }
