@@ -1,0 +1,8 @@
+需求:统计userBehavior的PV
+避免数据倾斜
+
+1.创建环境,设置高并发
+2.接收数据,转换为javabean
+3.添加随机值进行分组count
+4.再次按照WindowEndTime分组
+5.聚合计算并输出

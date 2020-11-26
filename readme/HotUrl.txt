@@ -1,0 +1,11 @@
+需求:每隔5秒，输出最近10分钟内访问量最多的前N个URL
+
+1.读取文件数据
+2.转换结构为javaBean
+3.设置EventTime时间并过滤,添加1min的watermark
+4.keyBy区分不同商品 ,允许迟到数据1s
+5.开窗10分钟,步长5s
+6.使用自定义函数:aggregateFun:累加聚合count次数
+windowFun:添加windowEndTime输出
+7.重新按照添加windowEndTime输出分组
+8.接受数据使用processFun启动定时器输出一个窗口的TopN

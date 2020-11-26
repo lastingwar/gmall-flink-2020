@@ -1,0 +1,11 @@
+需求:计算每隔5分钟输出最近一小时内点击量最多的前N个商品
+
+1.读取文件数据
+2.转换结构为javaBean
+3.设置EventTime时间并过滤
+4.keyBy区分不同商品
+5.开窗1小时,步长5分钟
+6.使用自定义函数:aggregateFun:累加聚合count次数
+windowFun:添加windowEndTime输出
+7.重新按照添加windowEndTime输出分组
+8.接受数据使用processFun启动定时器输出一个窗口的TopN
